@@ -1,6 +1,6 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
-const { authenticate, authorizeAdminOnlyLegacy } = require('../middleware/auth');
+const { authenticate, authorize, ROLES } = require('../middleware/auth');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -84,7 +84,9 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // POST /api/patients (Register patient)
-router.post('/', authenticate, async (req, res) => {
+// Reserved for front-desk and admin roles. Doctors view patients through
+// the appointment worklist, never create them directly.
+router.post('/', authenticate, authorize([ROLES.ADMIN, ROLES.RECEPTIONIST]), async (req, res) => {
   try {
     const { name, email, phoneNumber, age, gender, medicalHistory } = req.body;
 
@@ -112,10 +114,8 @@ router.post('/', authenticate, async (req, res) => {
   }
 });
 
-// DELETE /api/patients/:id
-// SECURITY BUG: The route relies on authorizeAdminOnlyLegacy, which has the bypassed admin validation check!
-// This allows any receptionist or doctor to delete a patient.
-router.delete('/:id', authenticate, authorizeAdminOnlyLegacy, async (req, res) => {
+// DELETE /api/patients/:id — destructive, ADMIN only.
+router.delete('/:id', authenticate, authorize(ROLES.ADMIN), async (req, res) => {
   try {
     const { id } = req.params;
 
