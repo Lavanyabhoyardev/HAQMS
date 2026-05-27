@@ -95,11 +95,14 @@ export default function Dashboard() {
     }
   };
 
-  // Trigger Patient List Fetch (Every keystroke trigger re-renders parent! - Performance bug)
+  // Debounce search/gender changes. The cleanup cancels any pending fetch
+  // when the user keeps typing, so only the last keystroke in a 350 ms quiet
+  // window actually hits the API. Discrete events (Prev/Next pagination,
+  // form submits) still call fetchPatients directly with no delay.
   useEffect(() => {
-    if (user.role === 'RECEPTIONIST' || user.role === 'ADMIN') {
-      fetchPatients(1);
-    }
+    if (user.role !== 'RECEPTIONIST' && user.role !== 'ADMIN') return;
+    const timer = setTimeout(() => fetchPatients(1), 350);
+    return () => clearTimeout(timer);
   }, [patientSearch, patientGender]);
 
   // Fetch Doctors for booking drop-down

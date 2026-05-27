@@ -67,14 +67,21 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // GET /api/patients/:id
-// Get patient details by ID. Notice N+1 issue could be placed here or in appointments,
-// but let's make it fetch the patient with their appointments and tokens.
+// Single round trip — patient + appointments (newest first) + the doctor on
+// each appointment. Powers the diagnostic-records page.
 router.get('/:id', authenticate, async (req, res) => {
   try {
     const patient = await prisma.patient.findUnique({
       where: { id: req.params.id },
       include: {
-        appointments: true, // Fetching relation direct
+        appointments: {
+          orderBy: { appointmentDate: 'desc' },
+          include: {
+            doctor: {
+              select: { id: true, name: true, specialization: true, department: true },
+            },
+          },
+        },
       },
     });
 
@@ -84,7 +91,8 @@ router.get('/:id', authenticate, async (req, res) => {
 
     res.json(patient);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    logger.error('Patient lookup failed', error, { id: req.params.id });
+    res.status(500).json({ error: 'Failed to load patient.' });
   }
 });
 
