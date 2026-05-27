@@ -15,9 +15,21 @@ const reportRoutes = require('./routes/reports');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Enable CORS for all origins (weak/broad CORS config)
-app.use(cors());
+// CORS — whitelist driven by CORS_ORIGINS env (comma-separated). Same-origin
+// and no-origin requests (server-to-server, curl, health probes) are allowed
+// unconditionally; everything else must match a configured origin exactly.
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    cb(null, ALLOWED_ORIGINS.includes(origin));
+  },
+  credentials: false,
+}));
 // Body parser
 app.use(express.json());
 

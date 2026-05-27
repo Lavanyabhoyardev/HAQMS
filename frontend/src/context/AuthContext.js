@@ -34,10 +34,10 @@ export const AuthProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const router = useRouter();
 
-  // HARDCODED API VALUE: Intentionally hardcoding the backend base URL on the frontend!
-  // This violates production standards and prevents simple domain config, but serves as
-  // a perfect exercise for internship candidates to move to environment variables.
-  const API_BASE_URL = 'http://localhost:5000/api';
+  // Backend base URL is env-driven (NEXT_PUBLIC_* is inlined at build time by
+  // Next.js). The localhost fallback keeps the dev experience zero-config.
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:5000/api';
+
 
   useEffect(() => {
     const storedToken = localStorage.getItem('haqms_token');
