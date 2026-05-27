@@ -37,9 +37,6 @@ model User {
   doctor Doctor?
 }
 
-// SCHEMA BUG: No unique constraint on (doctorId, appointmentDate).
-// This permits double-booking the same physician at the exact same time slot.
-// A proper constraint would be: @@unique([doctorId, appointmentDate])
 model Doctor {
   id              String   @id @default(uuid())
   userId          String?  @unique
@@ -53,10 +50,12 @@ model Doctor {
   availableTo     String   @default("17:00")
   createdAt       DateTime @default(now())
 
-  // MISSING INDEX: No index on department or specialization.
-  // Filtering/searching by these columns does full table scans at scale.
   appointments Appointment[]
   queueTokens  QueueToken[]
+
+  // Filter columns for doctor search and stats aggregation.
+  @@index([department])
+  @@index([specialization])
 }
 
 model Patient {
@@ -66,7 +65,7 @@ model Patient {
   phoneNumber    String
   age            Int
   gender         String
-  medicalHistory String?  // Nullable — intentional crash trigger for frontend bug
+  medicalHistory String?
   createdAt      DateTime @default(now())
 
   appointments Appointment[]
@@ -84,25 +83,45 @@ model Appointment {
   status          AppointmentStatus @default(PENDING)
   createdAt       DateTime          @default(now())
 
-  // MISSING INDEX: No index on (doctorId, status) — important for worklist queries.
-  // MISSING INDEX: No index on patientId foreign key.
   queueTokens QueueToken[]
+
+  // Hard DB-level guarantee against double-booking the same physician at the
+  // exact appointmentDate value — closes the TOCTOU race in the booking
+  // handler. The (doctorId, appointmentDate) composite also serves as the
+  // covering index for worklist lookups sorted by date.
+  @@unique([doctorId, appointmentDate])
+
+  // Per-doctor status grouping (reports.js groupBy by (doctorId, status)).
+  @@index([doctorId, status])
+  // Foreign-key index for patient-history lookups.
+  @@index([patientId])
 }
 
 model QueueToken {
-  id            String      @id @default(uuid())
+  id            String       @id @default(uuid())
   tokenNumber   Int
+  // Date portion of the token's day. Stored as DATE (no time) so the
+  // (doctorId, tokenNumber, tokenDate) unique gives one fresh sequence per
+  // calendar day per doctor. Default is the DB's CURRENT_DATE so legacy
+  // inserts (seed scripts, migrations) keep working without changes.
+  tokenDate     DateTime     @default(dbgenerated("CURRENT_DATE")) @db.Date
   patientId     String
-  patient       Patient     @relation(fields: [patientId], references: [id])
+  patient       Patient      @relation(fields: [patientId], references: [id])
   doctorId      String
-  doctor        Doctor      @relation(fields: [doctorId], references: [id])
+  doctor        Doctor       @relation(fields: [doctorId], references: [id])
   appointmentId String?
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
-  status        QueueStatus @default(WAITING)
-  createdAt     DateTime    @default(now())
+  status        QueueStatus  @default(WAITING)
+  createdAt     DateTime     @default(now())
 
-  // MISSING INDEX: No index on (doctorId, createdAt) — used in daily token aggregation.
-  // MISSING INDEX: No index on status — used in frequent status filter queries.
-  // SCHEMA BUG: No unique constraint on (doctorId, tokenNumber, date) —
-  // race condition in checkin route can produce duplicate token numbers for the same doctor+day.
+  // Daily uniqueness — DB-side backstop to the advisory lock in queue.js.
+  @@unique([doctorId, tokenNumber, tokenDate])
+
+  // Used by the daily MAX(tokenNumber) aggregate and the today-queue
+  // groupBy in reports.js.
+  @@index([doctorId, createdAt])
+  // Used by the live monitor board (status filter) and the doctor queue tab.
+  @@index([status])
+  // Foreign-key index for patient queue history.
+  @@index([patientId])
 }

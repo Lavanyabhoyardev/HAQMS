@@ -98,7 +98,14 @@ router.post('/', authenticate, authorize([ROLES.ADMIN, ROLES.RECEPTIONIST]), asy
       appointment,
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to book appointment', details: error.message });
+    // P2002 = Prisma unique-constraint violation. The (doctorId, appointmentDate)
+    // unique caught a concurrent booking that slipped past the findFirst check.
+    if (error && error.code === 'P2002') {
+      return res.status(409).json({
+        error: 'This time slot is already booked for the selected doctor.',
+      });
+    }
+    res.status(500).json({ error: 'Failed to book appointment' });
   }
 });
 

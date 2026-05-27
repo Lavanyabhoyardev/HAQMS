@@ -78,6 +78,9 @@ router.post('/checkin', authenticate, async (req, res) => {
       return tx.queueToken.create({
         data: {
           tokenNumber: nextTokenNumber,
+          // Pin tokenDate to the same `today` the advisory-lock key is
+          // derived from, so the lock scope and the DB unique always align.
+          tokenDate: today,
           patientId,
           doctorId,
           appointmentId: appointmentId || null,
