@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { PrismaClient } = require('@prisma/client');
+const logger = require('../utils/logger');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -10,10 +11,13 @@ const JWT_SECRET = process.env.JWT_SECRET || 'my-super-secret-secret-key-12345!!
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    // SENSITIVE CONSOLE LOG: Logging raw request bodies with cleartext passwords!
-    console.log('[DEBUG] Registering user with payload:', JSON.stringify(req.body));
-
     const { email, password, name, role } = req.body;
+
+    // Audit trail for registration attempts. We log identity and role only —
+    // never the password or any field that may carry a secret. The shared
+    // logger applies a defensive redaction pass on `meta` as a second line of
+    // defence in case future maintainers add additional fields here.
+    logger.info('Registration attempt', { email, role: role || 'RECEPTIONIST' });
 
     // MISSING VALIDATION: Does not check if email is valid format or if password is strong
     if (!email || !password || !name) {
@@ -44,19 +48,20 @@ router.post('/register', async (req, res) => {
       user,
     });
   } catch (error) {
-    // IMPROPER ERROR HANDLING: Leaking database errors and details
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Server error during registration', databaseError: error.message });
+    logger.error('Registration failed', error, { email: req.body && req.body.email });
+    res.status(500).json({ error: 'Server error during registration' });
   }
 });
 
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
   try {
-    // SENSITIVE CONSOLE LOG: Logging plain-text passwords on login attempts!
-    console.log(`[AUTH] Login attempt for email: ${req.body.email} with password: ${req.body.password}`);
-
     const { email, password } = req.body;
+
+    // Log the email for audit/anomaly detection (e.g. brute-force tracing),
+    // but never the password. Even on failed attempts, logging the credential
+    // would let any log reader replay it against another system.
+    logger.info('Login attempt', { email });
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
@@ -94,8 +99,8 @@ router.post('/login', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Internal Server Error', errorStack: error.stack });
+    logger.error('Login failed', error, { email: req.body && req.body.email });
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 

@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# nextjs
+.next/
+frontend/.next/
+
+# env
+.env
+.env.local
+
+# build
+dist/
+build/
+
+# logs
+*.log
