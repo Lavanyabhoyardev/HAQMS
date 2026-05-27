@@ -1,63 +1,68 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const { authenticate, authorize, ROLES } = require('../middleware/auth');
+const logger = require('../utils/logger');
 
 const router = express.Router();
 const prisma = new PrismaClient();
 
+const DEFAULT_LIMIT = 5;
+const MAX_LIMIT = 50;
+const MAX_SEARCH_LEN = 100;
+
+function parsePositiveInt(value, fallback) {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 // GET /api/patients
-// Get all patients with search, filtering, and INEFICIENT IN-MEMORY PAGINATION
+// DB-driven pagination + filtering. The row count and the page slice run in a
+// single round trip via $transaction so they see the same snapshot — pagination
+// metadata can never disagree with the returned rows.
 router.get('/', authenticate, async (req, res) => {
   try {
     const { search, gender } = req.query;
-    
-    // Inefficient: Retrieve all matching rows without take/skip limits from the database.
-    // Scales poorly as patient directory grows.
-    const allPatients = await prisma.patient.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
 
-    let filteredPatients = allPatients;
+    const page = parsePositiveInt(req.query.page, 1);
+    const limit = Math.min(MAX_LIMIT, parsePositiveInt(req.query.limit, DEFAULT_LIMIT));
+    const skip = (page - 1) * limit;
 
-    // In-memory filter for search (checks name/phone/email)
-    if (search) {
-      const query = search.toLowerCase();
-      filteredPatients = filteredPatients.filter(
-        (p) =>
-          p.name.toLowerCase().includes(query) ||
-          p.phoneNumber.includes(query) ||
-          (p.email && p.email.toLowerCase().includes(query))
-      );
+    const where = {};
+    if (typeof search === 'string' && search.trim()) {
+      const term = search.trim().slice(0, MAX_SEARCH_LEN);
+      where.OR = [
+        { name: { contains: term, mode: 'insensitive' } },
+        { phoneNumber: { contains: term } },
+        { email: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+    if (typeof gender === 'string' && gender && gender !== 'All') {
+      where.gender = gender;
     }
 
-    // In-memory filter for gender
-    if (gender && gender !== 'All') {
-      filteredPatients = filteredPatients.filter(
-        (p) => p.gender.toLowerCase() === gender.toLowerCase()
-      );
-    }
+    const [patients, totalPatients] = await prisma.$transaction([
+      prisma.patient.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.patient.count({ where }),
+    ]);
 
-    // In-memory pagination setup
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 5;
-    const offset = (page - 1) * limit;
-    
-    const paginatedResult = filteredPatients.slice(offset, offset + limit);
-    const totalPages = Math.ceil(filteredPatients.length / limit);
-
-    // Inconsistent Response style
     res.json({
       success: true,
-      patients: paginatedResult,
+      patients,
       pagination: {
         page,
         limit,
-        totalPatients: filteredPatients.length,
-        totalPages,
+        totalPatients,
+        totalPages: Math.max(1, Math.ceil(totalPatients / limit)),
       },
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch patients', details: error.message });
+    logger.error('Patient list failed', error);
+    res.status(500).json({ error: 'Failed to fetch patients.' });
   }
 });
 
