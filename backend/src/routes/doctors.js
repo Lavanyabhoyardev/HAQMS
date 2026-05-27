@@ -1,43 +1,38 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const { authenticate } = require('../middleware/auth');
+const logger = require('../utils/logger');
 
 const router = express.Router();
 const prisma = new PrismaClient();
 
+const MAX_SEARCH_LEN = 100;
+
 // GET /api/doctors
-// Retrieve list of doctors with special search filtering
-// SECURITY BUG: SQL Injection vulnerability in the search parameter!
-// Uses queryRawUnsafe with string concatenation instead of parameterized inputs.
+// Doctor search & filter. All user input flows through Prisma's typed query
+// builder, which parameterises every value — no string interpolation, no
+// $queryRawUnsafe. The response shape (bare array) is preserved.
 router.get('/', authenticate, async (req, res) => {
   try {
     const { search, specialization } = req.query;
+    const where = {};
 
-    let query = 'SELECT * FROM "Doctor"';
-    const conditions = [];
-
-    if (search) {
-      // Direct string interpolation - VULNERABLE TO SQL INJECTION!
-      // Example exploit: search=House%' UNION SELECT id, email, password, name, role, '09:00', '17:00', 0, id FROM "User" --
-      conditions.push(`name ILIKE '%${search}%'`);
+    if (typeof search === 'string' && search.trim()) {
+      // Reject pathological lengths up front — bounded input keeps the
+      // ILIKE plan cheap and removes a DOS surface.
+      const term = search.trim().slice(0, MAX_SEARCH_LEN);
+      where.name = { contains: term, mode: 'insensitive' };
     }
 
-    if (specialization && specialization !== 'All') {
-      conditions.push(`specialization = '${specialization}'`);
+    if (typeof specialization === 'string' && specialization && specialization !== 'All') {
+      where.specialization = specialization.slice(0, MAX_SEARCH_LEN);
     }
 
-    if (conditions.length > 0) {
-      query += ' WHERE ' + conditions.join(' AND ');
-    }
-
-    console.log(`[SQL-DEBUG] Executing Query: ${query}`);
-    const doctors = await prisma.$queryRawUnsafe(query);
-
-    // Inconsistent API formatting (directly sending array)
+    const doctors = await prisma.doctor.findMany({ where });
     res.json(doctors);
   } catch (error) {
-    // Leaks query syntax details to candidate/attacker
-    res.status(500).json({ error: 'Database execution failure', sqlMessage: error.message });
+    logger.error('Doctor search failed', error);
+    res.status(500).json({ error: 'Failed to load doctors.' });
   }
 });
 
@@ -83,7 +78,8 @@ router.get('/stats', authenticate, async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    logger.error('Doctor stats failed', error);
+    res.status(500).json({ error: 'Failed to load doctor stats.' });
   }
 });
 
@@ -100,7 +96,8 @@ router.get('/:id', authenticate, async (req, res) => {
 
     res.json(doctor);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    logger.error('Doctor lookup failed', error, { id: req.params.id });
+    res.status(500).json({ error: 'Failed to load doctor.' });
   }
 });
 

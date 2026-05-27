@@ -1,64 +1,93 @@
-const jwt = require('jsonwebtoken');
+'use strict';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'my-super-secret-secret-key-12345!!!';
+const {
+  TokenExpiredError,
+  JsonWebTokenError,
+  NotBeforeError,
+} = require('jsonwebtoken');
+const { verifyAccessToken } = require('../utils/jwt');
+const logger = require('../utils/logger');
 
-// Authentication middleware
-const authenticate = (req, res, next) => {
+// Authentication middleware.
+//
+// Responsibilities, in order:
+//   1. Reject requests with no/malformed Authorization header (cheap fast-path).
+//   2. Verify the token using the pinned algorithm, issuer, and audience.
+//      Expiry is enforced (no ignoreExpiration shortcut).
+//   3. Normalise the payload so downstream handlers see a stable
+//      { id, role } shape — never the raw decoded JWT.
+//   4. Return a generic, fingerprint-free error to the client. The server-side
+//      log keeps enough detail to debug; the client gets nothing usable for
+//      brute-forcing.
+function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Access denied. No token provided.' });
+    return res.status(401).json({ error: 'Authentication required.' });
   }
 
-  const token = authHeader.split(' ')[1];
+  const token = authHeader.slice('Bearer '.length).trim();
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
 
   try {
-    // SECURITY BUG: The verification is weak. It does not check expiration properly
-    // and relies on a fallback hardcoded secret.
-    const decoded = jwt.verify(token, JWT_SECRET, { ignoreExpiration: true }); 
-    
-    // Add user details to request object
-    req.user = decoded;
-    next();
-  } catch (error) {
-    // IMPROPER ERROR HANDLING: Leaks full error details including secret key mismatches to the client
-    return res.status(401).json({ error: 'Invalid token.', details: error.message });
-  }
-};
+    const payload = verifyAccessToken(token);
 
-// Role authorization middleware
-const authorize = (roles = []) => {
-  if (typeof roles === 'string') {
-    roles = [roles];
-  }
+    // Defensive: a syntactically valid token with a missing/bogus payload
+    // shape must still be rejected. Treats unexpected payloads as untrusted
+    // rather than letting them through with `undefined` fields.
+    if (!payload.id || !payload.role) {
+      return res.status(401).json({ error: 'Invalid token.' });
+    }
 
+    req.user = { id: payload.id, role: payload.role };
+    return next();
+  } catch (err) {
+    // TokenExpiredError is the one case the client genuinely needs to
+    // disambiguate so the frontend can prompt a re-login instead of showing
+    // a generic "something broke". The code is non-actionable on its own.
+    if (err instanceof TokenExpiredError) {
+      return res.status(401).json({
+        error: 'Session expired. Please sign in again.',
+        code: 'TOKEN_EXPIRED',
+      });
+    }
+
+    // Signature / format / issuer / audience failures all collapse to the
+    // same opaque response so an attacker can't learn which check tripped.
+    if (err instanceof JsonWebTokenError || err instanceof NotBeforeError) {
+      logger.warn('Rejected JWT', { reason: err.name });
+      return res.status(401).json({ error: 'Invalid token.' });
+    }
+
+    // Anything else is a real bug, not an auth decision. Log loudly, deny.
+    logger.error('Unexpected JWT verification failure', err);
+    return res.status(401).json({ error: 'Invalid token.' });
+  }
+}
+
+// Role-based authorisation.
+function authorize(roles = []) {
+  const allowed = typeof roles === 'string' ? [roles] : roles;
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({ error: 'Unauthorized. User context missing.' });
+      return res.status(401).json({ error: 'Authentication required.' });
     }
-
-    // Role-based verification
-    if (roles.length && !roles.includes(req.user.role)) {
-      return res.status(403).json({ error: `Forbidden. Requires role: ${roles.join(' or ')}` });
+    if (allowed.length && !allowed.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden.' });
     }
-
-    next();
+    return next();
   };
-};
+}
 
-// MISSING AUTHORIZATION CHECK: This middleware is meant for Admin actions but is empty
-// or fails to check the role, allowing any authenticated user (e.g. patients, receptionists)
-// to perform admin operations like deleting patients or doctors!
-const authorizeAdminOnlyLegacy = (req, res, next) => {
+// Legacy admin gate — still bypassed on purpose. Addressed in the
+// Bypassed-Authorization challenge so the diff per fix stays focused.
+function authorizeAdminOnlyLegacy(req, res, next) {
   if (!req.user) {
-    return res.status(401).json({ error: 'Unauthorized.' });
+    return res.status(401).json({ error: 'Authentication required.' });
   }
-  // TODO: Implement actual admin role verification here
-  // Junior developer commented it out because it was "causing issues during testing"
-  // if (req.user.role !== 'ADMIN') {
-  //   return res.status(403).json({ error: 'Access denied. Admin only.' });
-  // }
   next();
-};
+}
 
 module.exports = {
   authenticate,

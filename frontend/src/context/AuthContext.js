@@ -5,6 +5,28 @@ import { useRouter } from 'next/navigation';
 
 const AuthContext = createContext();
 
+// Decode the JWT payload locally to check `exp` only — this is NOT a security
+// check (the server still verifies the signature on every request), it just
+// prevents the UI from operating as if a long-expired token were still valid.
+// On any parse error we treat the token as expired and force a fresh login.
+function isJwtExpired(rawToken) {
+  try {
+    const parts = rawToken.split('.');
+    if (parts.length !== 3) return true;
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(
+      typeof atob === 'function'
+        ? atob(base64)
+        : Buffer.from(base64, 'base64').toString('utf8')
+    );
+    if (typeof payload.exp !== 'number') return true;
+    // 30s leeway covers minor client/server clock drift.
+    return Date.now() >= (payload.exp - 30) * 1000;
+  } catch {
+    return true;
+  }
+}
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
@@ -18,17 +40,24 @@ export const AuthProvider = ({ children }) => {
   const API_BASE_URL = 'http://localhost:5000/api';
 
   useEffect(() => {
-    // Check for stored token and user on initialization
     const storedToken = localStorage.getItem('haqms_token');
     const storedUser = localStorage.getItem('haqms_user');
 
     if (storedToken && storedUser) {
-      try {
-        setToken(storedToken);
-        setUser(JSON.parse(storedUser));
-      } catch (e) {
-        console.error('Failed to parse user details from localStorage', e);
-        logout();
+      // Reject any stale token at boot instead of leaving the app in a
+      // "logged in but every request 401s" zombie state.
+      if (isJwtExpired(storedToken)) {
+        localStorage.removeItem('haqms_token');
+        localStorage.removeItem('haqms_user');
+      } else {
+        try {
+          setToken(storedToken);
+          setUser(JSON.parse(storedUser));
+        } catch (e) {
+          console.error('Failed to parse user details from localStorage', e);
+          localStorage.removeItem('haqms_token');
+          localStorage.removeItem('haqms_user');
+        }
       }
     }
     setLoading(false);
