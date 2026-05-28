@@ -1103,7 +1103,7 @@ export default function Dashboard() {
                 Staff Physicians Registry Lookup
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 font-semibold mt-1">
-                Database lookup for credentials. Uses a raw SQL interpolation backend query.
+                Database lookup for credentials. Parameterized via Prisma — safe from SQL injection.
               </p>
             </div>
 
@@ -1129,14 +1129,19 @@ export default function Dashboard() {
               </button>
             </div>
 
-            <div className="p-3 bg-rose-500/10 text-rose-500 text-xs rounded-lg border border-rose-500/20 font-semibold leading-5 flex gap-3">
-              <ShieldAlert className="h-5 w-5 shrink-0" />
+            <div className="p-3 bg-teal-500/10 text-teal-700 dark:text-teal-400 text-xs rounded-lg border border-teal-500/20 font-semibold leading-5 flex gap-3">
+              <CheckCircle className="h-5 w-5 shrink-0" />
               <div>
-                <strong>SQL Vulnerability alert:</strong> This search executes raw interpolation: 
-                <code className="block bg-black/10 dark:bg-black/30 p-1.5 rounded mt-1 font-mono">
+                <strong>SQL Injection patched (Challenge 1.3).</strong> The original handler interpolated user input directly into a raw SQL string. It now flows through Prisma&apos;s typed query builder with parameter binding + a 100-char input cap.
+                <code className="block bg-rose-500/10 text-rose-500 p-1.5 rounded mt-2 font-mono line-through opacity-70">
                   SELECT * FROM &quot;Doctor&quot; WHERE name ILIKE &apos;%&#123;query&#125;%&apos;
                 </code>
-                Can be audited by inputting standard SQL injection strings to leak full user login lists.
+                <code className="block bg-teal-500/10 text-teal-700 dark:text-teal-300 p-1.5 rounded mt-1 font-mono">
+                  prisma.doctor.findMany(&#123;&#32;where:&#32;&#123;&#32;name:&#32;&#123;&#32;contains,&#32;mode:&#32;&apos;insensitive&apos;&#32;&#125;&#32;&#125;&#32;&#125;)
+                </code>
+                <span className="block mt-2 text-slate-500 dark:text-slate-400 font-medium">
+                  Try a payload like <code className="font-mono">%&apos; UNION SELECT * FROM &quot;User&quot; --</code> — input is treated as literal text, returns <code className="font-mono">[ ]</code>.
+                </span>
               </div>
             </div>
 
