@@ -2,6 +2,22 @@
 
 > **Status:** Engineering audit complete. The codebase shipped with 12 deliberate defects across security, performance, concurrency, schema design, and frontend reliability. Each has been identified, root-caused, and patched with production-grade fixes preserving 100% of the original API contract. The full audit report sits at the top of this file; the original assessment brief is preserved below.
 
+## 🌐 Live Demo
+
+| Surface | URL |
+|---|---|
+| **Frontend (Vercel)** | https://haqms-one.vercel.app |
+| **Backend (Render)** | https://haqms-backend-imbl.onrender.com |
+| **Database** | Neon Postgres (serverless) |
+
+**Demo credentials** (all use password `password123`):
+- Admin → `admin@haqms.com`
+- Receptionist → `reception1@haqms.com`
+- Doctor → `doctor1@haqms.com`
+
+> First request after idle may take ~30–60s while the Render free tier wakes up. Subsequent requests are instant.
+
+
 ---
 
 ## 📋 Engineering Audit — Summary
